@@ -57,7 +57,7 @@ pre_trained_yenet_path = _env_path(
     os.path.join("checkpoints", "yenet", "net.pt"),
 )
 
-secret_postprocess = "dncnn"
+secret_postprocess = "none"
 dncnn_ckpt = _env_path("DNCNN_CKPT", os.path.join("models", "dncnn_color_blind.pth"))
 
 scale_factor = 0.95

@@ -57,7 +57,7 @@ image_save_dirs = os.path.join(base_dir, experiment_name, secret_dataset)
 if exp_tag:
     image_save_dirs = os.path.join(image_save_dirs, exp_tag)
 mkdirs(image_save_dirs)
-logger_info(logger_name, log_path=os.path.join(image_save_dirs, 'result_dcnn.log'))
+logger_info(logger_name, log_path=os.path.join(image_save_dirs, 'result.log'))
 logger = logging.getLogger(logger_name)
 
 # Keep complete file logging, but silence terminal output from this logger.
@@ -1075,11 +1075,17 @@ def reverse_crop_and_rearrange_no_loop(pert_full, block_positions, block_size=8)
 
 model = decodingNetwork(input_channel=3 *c.psf*c.psf, output_channels=3*c.psf*c.psf, down_ratio_l2=down_ratio_l2,
                         down_ratio_l3=down_ratio_l3).to(device)
-denoise_model = DnCNN(in_nc=3, out_nc=3, nc=64, nb=20, act_mode='R').to(device)
-denoise_model.load_state_dict(torch.load(_resolve_ckpt_path(c.dncnn_ckpt), map_location=device), strict=True)
-denoise_model.eval()
-for p in denoise_model.parameters():
-    p.requires_grad_(False)
+secret_postprocess = str(getattr(c, 'secret_postprocess', 'none')).strip().lower()
+if secret_postprocess in ('', 'none', 'off', 'false', '0'):
+    denoise_model = None
+elif secret_postprocess in ('dncnn', 'dcnn'):
+    denoise_model = DnCNN(in_nc=3, out_nc=3, nc=64, nb=20, act_mode='R').to(device)
+    denoise_model.load_state_dict(torch.load(_resolve_ckpt_path(c.dncnn_ckpt), map_location=device), strict=True)
+    denoise_model.eval()
+    for p in denoise_model.parameters():
+        p.requires_grad_(False)
+else:
+    raise ValueError("Unsupported secret_postprocess: {}. Use 'none' or 'dncnn'.".format(secret_postprocess))
 
 _require_non_empty_image_dir(c.secret_dataset_dir)
 _require_non_empty_image_dir(c.cover_dataset_dir)
@@ -1435,7 +1441,7 @@ for i in range(start_index, len(secret_image_path_list)):
     e_scores = jxx + jyy
     lambda2 = (e_scores - anis_num) / 2.0
 
-    keep_ratio_lambda2 = float(getattr(c, 'texture_lambda2_keep_ratio', 0.90))
+    keep_ratio_lambda2 = float(getattr(c, 'texture_lambda2_keep_ratio', 0.70))
     if indices_tex.numel() > 0:
         lambda2_tex = lambda2[indices_tex]
         l2_q = max(0.0, min(1.0, 1.0 - keep_ratio_lambda2))
@@ -1726,8 +1732,9 @@ for i in range(start_index, len(secret_image_path_list)):
     adv_pert = reverse_crop_and_rearrange_no_loop(adv_pert_full, block_positions)
     secret_rev = model(adv_pert)
 
-    with torch.no_grad():
-        secret_rev = denoise_model(secret_rev)
+    if denoise_model is not None:
+        with torch.no_grad():
+            secret_rev = denoise_model(secret_rev)
     secret_rev = torch.round(torch.clamp(secret_rev * 255, min=0., max=255.)) / 255
     
     cover_resi = (adv_image - cover).abs() * c.resi_magnification
@@ -1772,7 +1779,7 @@ for i in range(start_index, len(secret_image_path_list)):
             )
         )
     
-    logger.info('--- Running robustness tests (DnCNN Postprocess + Clamp, Conventional Attacks) ---')
+    logger.info('--- Running robustness tests (Clamp, Conventional Attacks) ---')
     robustness_results = run_robustness_tests(
         adv_image,
         cover_backup,
